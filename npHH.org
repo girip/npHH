@@ -1,0 +1,354 @@
+#+STARTUP: inlineimages, hidestars, indent,  overview
+#+STARTUP: entitiespretty
+#+bibliography:~/org/articles/bigbibfile.bib
+#+org-download-image-dir: "/Volumes/Dala/org/pictures/"
+#+PROPERTY:header-args :results output :session :cache yes :tangle yes :comments org :exports both 
+
+To test in benchmark:
+Have large array for variable which needs to be updated by same function and distribute 
+-- OR --
+have local class objects or small arrays that are updated locally
+-- OR --
+
+Possible issues with giant synapse :
+1. Synaptic transmission failure --- This will break the giant synapse
+2. Minis -- can be fixed with
+3. stdp -- also can be fixed
+
+Use pyNN for setup network --> get a very simple simulator to work 
+
+* One synapse type
+
+#+BEGIN_SRC python 
+global no_syn[no_syn_types]
+global trans_prob[no_syn_types]=np.ones((no_syn_types,))
+
+# to do this in numba or cython
+def compute_gsyn_AMPAde(g_syn, pS, tp):
+    #  for si in range(0,len(g_syn)):
+    pSn=np.where(pS==1)
+    for pSni in range(0,len(pSn)):
+     
+    trans_prob = random.random(len(pSn))
+    pS = trans_prob * pS  # transmission prob
+    
+    g_syn = g_syn + G_Syn[AMPA_i] * pS # add weight by conductance 
+    g_syn = g_syn * AMPA_de
+    return g_syn
+
+def compute_gsyn_AMPA_mini(g_syn, pS, ov):
+    #  for si in range(0,len(g_syn)):
+    pSn=np.where(pS==1)
+    trans_prob = random.random(len(pSn))
+    pS = trans_prob * pS  # transmission prob
+    for si in range(0,len(g_syn)):
+     
+    g_syn = g_syn + G_Syn[AMPA_i] * pS # add weight by conductance 
+    g_syn = g_syn * AMPA_de
+    return g_syn
+        
+for st in synapse_types:
+    stN[st] = num_of_syn(st)
+
+for st in synapse_types:
+    if st==AMPA:
+        preSpikes = Spikes[index_AMPA]
+        
+        g_syn_AMPA = compute_gsyn_AMPA(g_syn_AMPA, preSpikes, AMPA_ov)
+        
+        Isyn_AMPA = g_syn_AMPA * W_AMPA * (V - E_AMPA)
+    
+    
+for st in synapse_types:
+
+
+#+END_SRC
+
+* Vectorize synapse code
+
+#+BEGIN_SRC c++
+
+// x - time
+
+q = ((x - lastrelease) - Cdur); 
+  
+if(q > Deadtime) {
+  if(prespike) {
+    if( (x - lastspike) > (Cdel + Cdur) ){
+      lastspike = x;
+      s = 1; 
+    } 
+  }  //the flag that spike was but wasn't utilized yet
+
+  if((s == 1) && ((x - lastspike) > Cdel)) {
+    s = 0; //spike was utilized
+    C = Cmax;                
+    R0 = R;
+    lastrelease = x;  
+  }
+ }else if (q < 0){     // x-lr<0.3
+ }else if (C == Cmax){ // q>0 && q<1              
+  R1 = R;
+  C = 0.;
+ }
+
+if (C > 0) {                            
+  R = Rinf + (R0 - Rinf) * exptable (-(x - lastrelease) / Rtau);
+ } else {                              
+  R = R1 * exptable (-Beta * (x - (lastrelease + Cdur)));
+ }
+
+
+#+END_SRC
+
+#+BEGIN_SRC python 
+
+lastspike --- is it required ? can modify the spike checking within neuron 
+
+def compute_gsyn_AMPA_mini(g_syn, pS, lastspike, ov, time):
+    #  for si in range(0,len(g_syn)):
+    pSn=np.where(pS==1)
+    if time>
+    trans_prob = random.random(len(pSn))
+    pS = trans_prob * pS  # transmission prob
+
+    for si in range(0,len(g_syn)):
+        
+
+
+x > last_spike + dur 
+
+
+#+END_SRC
+* npHHv1 -- Global array with gather and distribute  
+
+synapse array 
+- has all exp synapse variables
+
+loop through time
+- loop through synapse -- not giant synapse
+  - update for next time step
+- loop through neurons
+  - gather all inputs -- what is the smart way to do this
+
+** V1.1 - how to do giantsyn + stdp
+ 
+** V1.1 - Define math objects with level 
+- exp operation and level
+
+** V1.2 - V1.1 + 
+
+* npHHv2 -- Local objects 
+
+neuron-synapse class
+- array for neuron variables or index to larger array
+- array for synapse variables
+
+* npHHv3 -- Combination of local and global 
+
+* Code info
+** Pseudocode
+
+Loop for time
+  Loop for neurons
+    calculate syn currents 
+
+** Complexity
+n - number of neurons
+st - number of synapse types
+ps(presynapse) = n*st
+
+Loop for time
+  Loop for neurons
+    calculate syn currents - O(s) -- To be replaced by O(ps) 
+     --- mostly moving data -- 
+    calculate pre-syn - O(n)
+    calculate intrinsic currents - O(n)
+    distribute spikes -- Have list of output neurons for each neuron -- update the output neuron 
+
+** Classes ??
+** Arrays/vectors
+** Main functions and their purpose
+** Code control flow
+#+BEGIN_SRC dot :file npHH_flow.png 
+digraph npHH_flow {
+rankdir = LR;
+N1 [label="N step1"]
+pGS1 [label="Pre GS1"]
+pGS2 [label="Pre GS2"]
+pGSn [label="Pre GS.."]
+ISyn [label="I_Syn"]
+N2 [label="N step2"]
+Iint [label="I_Int"]
+
+N1->ISyn
+ISyn->pGS1
+ISyn->pGS2
+ISyn->pGSn
+pGS1->N1
+pGS2->N1
+pGSn->N1
+
+N1->N2
+N2->Iint
+Iint->N2
+
+
+}
+#+END_SRC
+
+#+RESULTS[f856497c0841a36a84c9fa1a4a151c6086e2c653]:
+[[file:npHH_flow.png]]
+
+* Benchmark different algo
+:PROPERTIES:
+:header-args: :session  HH_python :results output :python /Users/giriprash/anaconda/bin/python3.6
+:END:
+
+# Import stuff
+#+BEGIN_SRC python 
+import time
+import timeit
+import numpy as np
+from numba import vectorize
+from npHH import *
+#+END_SRC
+
+#+RESULTS:
+
+** Syn functions
+#+BEGIN_SRC python 
+def syn(st,spike):
+ delta=0.99
+ if spike==1:
+   st = st + 0.1
+ return st*delta
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC python 
+def gather_synaptic_currents_index(connectivity_matrix):
+ inp_index_si=np.zeros((connectivity_matrix.shape[0]+1),dtype=int)
+ inp_index=np.empty((0),dtype=int)
+ for ci in range(0,connectivity_matrix.shape[0]):
+   inp_index=np.append(inp_index,np.where(connectivity_matrix[ci,:]==1)[0])
+   inp_index_si[ci+1]=inp_index.shape[0]
+ return inp_index, inp_index_si
+#+END_SRC
+
+#+RESULTS:
+
+** Presyn Vs Postsyn
+#+BEGIN_SRC python 
+def presyn_call(st, no_neurons): 
+ for ni in range(0,no_neurons):
+  st[ni]=syn(st[ni],1)
+ return st
+
+def postsyn_call(pst, inp_index, inp_index_si, no_neurons): 
+ for ni in range(0,no_neurons):
+  for si in range(inp_index_si[ni],inp_index_si[ni+1]):
+   pst[inp_index[si]]=syn(pst[inp_index[si]],1)
+ return pst
+
+def call_Isum(st, Isum, inp_index, inp_index_si, no_neurons):
+ for ni in range(0,no_neurons):
+  si=inp_index_si[ni]
+  ei=inp_index_si[ni+1]
+  Isum[ni]=np.sum(st[inp_index[si:ei]])
+ return Isum
+
+#+END_SRC
+
+#+RESULTS:
+
+** Benchmark results
+*** Generate network
+#+BEGIN_SRC python 
+no_neurons=1000
+st=np.zeros((no_neurons))
+Isum=np.zeros((no_neurons))
+
+connectivity_matrix=gen_connectivity(no_neurons,0.7) 
+inp_index,inp_index_si=gather_synaptic_currents_index(connectivity_matrix)
+pst=np.zeros((inp_index.shape[0])) # number of connections
+print("{} neuron network with {} number of connections".format(no_neurons,inp_index.shape[0]))
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> >>> >>> >>> 1000 neuron network with 299707 number of connections
+
+*** Presyn
+#+BEGIN_SRC python 
+timeit.repeat('presyn_call(st,no_neurons)','from __main__ import presyn_call, st, no_neurons', number=100, repeat=3)
+#+END_SRC
+
+#+RESULTS:
+: [0.05292437199386768, 0.05272999100270681, 0.049857275997055694]
+
+#+BEGIN_SRC python 
+timeit.repeat('call_Isum(st, Isum, inp_index, inp_index_si, no_neurons)','from __main__ import call_Isum, st, Isum, inp_index, inp_index_si, no_neurons', number=100, repeat=3)
+#+END_SRC
+
+#+RESULTS:
+: [0.6209825909973006, 0.6187705129996175, 0.6199506030025077]
+
+*** Postsyn
+
+#+BEGIN_SRC python 
+timeit.repeat('postsyn_call(pst, inp_index, inp_index_si, no_neurons)','from __main__ import postsyn_call, pst, inp_index, inp_index_si, no_neurons', number=100, repeat=3)
+#+END_SRC
+
+#+RESULTS:
+: [32.089919095997175, 32.655966313002864, 32.60898096600431]
+
+*** Results
+
+#+NAME: benchmark
+| Neurons | Synapses | presyn | postsyn |
+|---------+----------+--------+---------|
+|    1000 |   400000 |   0.72 |    34.9 |
+|    1000 |   300000 |   0.67 |    26.9 |
+|    1000 |   200000 |   0.68 |    17.5 |
+|    1000 |    99000 |   0.57 |     8.9 |
+
+.72/.57 = 1.26315789474
+34.9/8.9 = 3.92134831461
+
+#+BEGIN_SRC python  :var data=benchmark
+x = [a[0] for a in data]
+y1 = [a[1] for a in data]
+y2 = [a[2] for a in data]
+y3 = [a[3] for a in data]
+a, = plt.plot(y1, y2, label="Presyn", marker='v')
+b, = plt.plot(y1, y3, label="Postsyn", marker='v')
+plt.show()
+#+END_SRC
+
+#+RESULTS:
+** Run 1 type and compare to c++
+:PROPERTIES:
+:header-args: :session npHH_1type :results output :python /Users/giriprash/anaconda/bin/python3.6
+:END:
+
+#+BEGIN_SRC python 
+from npHH import *
+
+length_simulation = 100 # in msec
+time_step = 0.02
+
+# setup network
+no_neuron_types=2
+no_neurons=10 # need to map the number of neurons to type
+
+no_synapse_types=1
+connectivity_matrix =gen_connectivity(no_neurons,0.8) 
+
+no_synapses=[int(np.sum(connectivity_matrix))] 
+#+END_SRC
+
+#+RESULTS[916506a04fbdd85ac859df76e16af9f2c44dca30]:
+
+

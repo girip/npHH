@@ -1,0 +1,401 @@
+#    -*- mode: org -*-
+
+
+Archived entries from file /Volumes/Dala/research-dala/npHH/npHH.org
+
+
+* Original code Numpy HH network
+:PROPERTIES:
+:header-args: :session  HH_python :results output
+:ARCHIVE_TIME: 2017-09-21 Thu 16:08
+:ARCHIVE_FILE: /Volumes/Dala/research-dala/npHH/npHH.org
+:ARCHIVE_CATEGORY: npHH
+:END:
+** Neuron/Synapse classes
+#+BEGIN_SRC python :tangle neuron_synapse_info.py 
+class Neuron_Types:
+ PY = 0
+ IN = 1
+
+class Syn_Types:
+ AMPA = 0
+ GABA = 1
+
+class AMPA:
+ gamma = 0.1
+ de = 0.005
+
+### Index for different variables
+class rki_PY:
+ V = 0
+
+class ovi_PY:
+ gL = 0
+ E_R = 0
+
+class PY:
+ gL = 0.05
+ E_R = -60.0 
+#+END_SRC
+
+#+RESULTS:
+
+** Neuron current functions
+
+#+BEGIN_SRC python :tangle npHH.py
+from neuron_synapse_info import *
+#+END_SRC
+
+#+RESULTS:
+: Traceback (most recent call last):
+:   File "<stdin>", line 1, in <module>
+: ImportError: No module named neuron_synapse_info
+
+#+BEGIN_SRC python :tangle npHH.py
+
+# one issue is the use of the if statement - soln try to use classes in cython??
+# advantage of using if --- one general function across all neurons -- may be beneficial in parallelizing??
+
+### Calc intrinsic currents 
+def neuron_calc(Nrkv, dNrkv, Nov, Iv, neuron_type):
+ if neuron_type==Neuron_Types.PY:
+  dNrkv[0] = PY.gL * (PY.E_R - Nrkv[0])
+# elif neuron_type==1:
+ return dNrkv, Nov
+#+END_SRC
+
+#+RESULTS:
+  
+** Synapse current functions
+#+BEGIN_SRC python :tangle npHH.py
+# try to use classes in cython?? 
+
+### Calc synaptic currents 
+def synapse_calc(Srkv, dSrkv, Sov, Iv, spike, syn_type):
+ if syn_type==Syn_Types.AMPA:
+  if spike:
+   Sov[0] = Sov[0] + AMPA.gamma
+  Iv = Iv * AMPA.de
+ elif syn_type==Syn_Types.GABA:
+  if spike:
+   Sov[0] = Sov[0] + GABA.gamma
+  Iv = Iv * GABA.de
+ return dSrkv, Sov
+#+END_SRC
+
+#+RESULTS:
+** RK functions
+#+BEGIN_SRC python :tangle npHH.py
+# can be cythonized
+def rk_steps(y,dy,Rk,T,step):
+# Rk  - 0:s, 1:yk
+ I = Rk.shape[1]
+ tau = 0.02
+ if (step==0):
+  for i in range(0, I):
+   Rk[0,i] = dy[i]
+   Rk[1,i] = y[i] + (tau/2.0)*dy[i] 
+   T = T + tau/2.0
+ elif(step==1):
+  for i in range(0, I):  
+   Rk[0,i] = Rk[0,i] + 2.0*dy[i] 
+   Rk[1,i] = y[i] + (tau/2.0)*dy[i] 
+ elif(step==2):
+  for i in range(0, I):
+   Rk[0,i] = Rk[0,i] + 2.0*dy[i] 
+   Rk[1,i] = y[i] + tau*dy[i] 
+   T = T + tau/2.0
+ elif(step==3):
+  for i in range(0, I):
+   y[i] = y[i] + (tau/6.0)*(Rk[0,i] + dy[i])
+#+END_SRC
+
+#+RESULTS:
+** gather synaptic currents fn
+#+BEGIN_SRC python 
+inp_in=[]
+#inp_inex=np.concatenate(inp_inex,[1,2])
+#inp_inex=np.concatenate(inp_inex,[1,2])
+#inp_inex
+inp_in.append([1,2])
+inp_in.append([3,4])
+inp_in.append([])
+inp_in.append([4,4])
+inp_in[2]
+#+END_SRC
+
+#+RESULTS:
+: 
+: ... ... ... >>> >>> >>> >>> []
+
+#+BEGIN_SRC python 
+def gather_synaptic_currents_index(connectivity_matrix):
+ inp_index=[]
+ for ci in range(0,connectivity_matrix.shape[0]):
+  inp_index.append(np.where(connectivity_matrix[ci,:]==1)[0])
+ return inp_index
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC python 
+inp_in=gather_synaptic_currents_index(connectivity_matrix)
+inp_in
+#+END_SRC
+
+#+RESULTS:
+: 
+: [array([3, 8, 9]), array([4]), array([1, 4, 9]), array([], dtype=int64), array([0, 7]), array([2, 3]), array([], dtype=int64), array([2, 5, 6]), array([0, 3, 7]), array([0])]
+
+** Initialize Variables
+*** Variables and arrays
+#+BEGIN_SRC python :tangle runHH.py
+#from npHH import *
+import numpy as np
+import random 
+
+length_simulation = 100 # in msec
+time_step = 0.02
+
+# setup network
+no_neuron_types=2
+no_neurons=[10,0]
+
+# define connections --- for now only connections from type 0 to 0 --- TODO to use gen_network functions
+connectivity_matrix=np.zeros((no_neurons[0],no_neurons[0]))
+for i in range(0,no_neurons[0]):  # from neuron
+ for k in range(0,no_neurons[0]): # to neuron
+  if (random.random()>0.8) and (i != k):
+   connectivity_matrix[i,k]=1
+
+no_synapse_types=1
+no_synapses=[int(np.sum(connectivity_matrix))] ## TODO for all types of connections
+
+#----- Create vectors for variables
+Nrk_var = np.array([1,1]) # number of RK variables per neuron type
+Srk_var = np.array([0,0]) # number of RK variables per synapse type
+
+No_var = np.array([0,0]) # number of other variables per neuron
+So_var = np.array([1,0]) # number of other variables per synapse
+
+Nrkv = np.zeros((np.sum(no_neurons*Nrk_var))) # vector of all the RK neuron variables
+Srkv = np.zeros((np.sum(no_synapses*Srk_var)))
+
+neuron_rk_vars=np.sum(no_neurons*Nrk_var)
+synapse_rk_vars=np.sum(no_synapses*Srk_var)
+
+# derivatives
+dNrkv = np.zeros((np.sum(no_neurons*Nrk_var))) # vector of all the RK neuron variables
+dSrkv = np.zeros((np.sum(no_synapses*Srk_var)))
+# intermediate Rk variable
+Nrk_tmp = np.zeros((2,neuron_rk_vars))
+Srk_tmp = np.zeros((2,synapse_rk_vars))
+
+no_ov_vars=np.sum(no_neurons*No_var)+np.sum(no_synapses*So_var)
+Nov = np.zeros((np.sum(no_neurons*No_var))) # vector of all the RK neuron variables
+Sov = np.zeros((np.sum(no_synapses*So_var)))
+
+#----- initialize variables -----
+# Nrkv, Srkv, ...
+Iv = np.zeros((np.sum(no_neurons))) # vector with the input current to each neuron
+Nspike = np.zeros((np.sum(no_neurons)), dtype=bool) # state of neuron -- spiked
+Sspike = np.zeros((np.sum(no_synapses)), dtype=bool)
+
+# ----- get arrays for neuron/synapse types and start index -----
+Is = np.zeros((np.sum(no_synapses))) # vector with the input current to each neuron
+Stypes = np.zeros((np.sum(no_synapses)))  #tag:1 ## for now use one type --- TODO modify this based on connections
+Ntypes = np.zeros((np.sum(no_neurons)))
+Ntypes[0:no_neurons[0]] = 0
+
+for nt in range(1,no_neuron_types):
+ Ntypes[np.sum(no_neurons[0:nt]):np.sum(no_neurons[0:nt])+no_neurons[nt]]=nt
+#+END_SRC
+
+#+RESULTS:
+
+*** More variables
+#+BEGIN_SRC python  :tangle runHH.py
+#------- Not vectorized, but parallelizable -----
+
+#---- start index for neurons/synapse
+Nsi_rk = np.zeros((1+np.sum(no_neurons)), dtype=int) 
+Ssi_rk = np.zeros((1+np.sum(no_synapses)), dtype=int)  #tag:1
+
+Nsi_ov = np.zeros((1+np.sum(no_neurons)), dtype=int) 
+Ssi_ov = np.zeros((1+np.sum(no_synapses)), dtype=int)  #tag:1
+
+running_nrki=0
+running_novi=0
+for nt in range(0,no_neuron_types):
+ for ni in range(0,no_neurons[nt]):
+  Nsi_rk[np.sum(no_neurons[0:nt])+ni]=running_nrki
+  running_nrki=running_nrki+Nrk_var[nt]  
+  Nsi_ov[np.sum(no_neurons[0:nt])+ni]=running_novi
+  running_novi=running_novi+No_var[nt]
+
+Nsi_rk[int(np.sum(no_neurons))]=np.sum(no_neurons*Nrk_var)
+Nsi_ov[int(np.sum(no_neurons))]=np.sum(no_neurons*No_var)
+
+running_srki=0
+running_sovi=0
+for st in range(0,no_synapse_types):
+ for si in range(0,no_synapses[st]):
+  Ssi_rk[int(np.sum(no_synapses[0:st]))+si]=running_srki
+  running_srki=running_srki+int(Srk_var[st])
+  Ssi_ov[np.sum(no_synapses[0:st])+si]=running_sovi
+  running_sovi=running_sovi+So_var[st]
+
+Ssi_rk[no_synapses]=np.sum(no_synapses*Srk_var) #tag:1
+Ssi_ov[no_synapses]=np.sum(no_synapses*So_var) #tag:1
+#+END_SRC
+
+#+RESULTS:
+** Main loop
+#+BEGIN_SRC python :tangle runHH.py 
+T=0
+ti=0
+Vout=np.zeros(((length_simulation/time_step)))
+#initialize_variables
+while (ti < length_simulation/time_step):
+ for step in range(0,4):
+  for si in range(0,np.sum(no_synapses)):
+   # dSrkv[Ssi_rk[si]:Ssi_rk[si+1]], Sov[Ssi_ov[si]:Ssi_ov[si+1]] = synapse_calc(Srkv[Ssi_rk[si]:Ssi_rk[si+1]], dSrkv[Ssi_rk[si]:Ssi_rk[si+1]], Sov[Ssi_ov[si]:Ssi_ov[si+1]], Is[si], Sspike[si], Stypes[si])
+   Sov[Ssi_ov[si]:Ssi_ov[si+1]] = synapse_calc_ov(Sov[Ssi_ov[si]:Ssi_ov[si+1]], Is[si], Sspike[si], Stypes[si])
+  gather_synaptic_currents(Is, Iv, connectivity_matrix)
+  for ni in range(0,np.sum(no_neurons)):
+   dNrkv[Nsi_rk[ni]:Nsi_rk[ni+1]], Nov[Nsi_ov[ni]:Nsi_ov[ni+1]] = neuron_calc(Nrkv[Nsi_rk[ni]:Nsi_rk[ni+1]], dNrkv[Nsi_rk[ni]:Nsi_rk[ni+1]], Nov[Nsi_ov[ni]:Nsi_ov[ni+1]], Iv[ni], Ntypes[ni])
+  rk_steps(Nrkv, dNrkv, Nrk_tmp, T, step) 
+ Vout[ti]=Nrkv[0]
+ ti=ti+1
+ #update_spike_status(Nv,Nspike)
+ #distribute_spike_status(Nspike, connectivity, Sspike)
+
+#@tags
+# 1: modify when more than 1 synapse type
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> >>> ... ... ... ... ... ... ... ... ... ... ... ... ... Traceback (most recent call last):
+:   File "<stdin>", line 6, in <module>
+: NameError: name 'gather_synaptic_currents' is not defined
+
+#+BEGIN_SRC python 
+Vout[1:10]
+#+END_SRC
+
+#+RESULTS:
+: array([-60., -60., -60., -60., -60., -60., -60., -60., -60.])
+
+
+* TODO Slightly more vectorized code
+:PROPERTIES:
+:ARCHIVE_TIME: 2017-09-21 Thu 16:09
+:ARCHIVE_FILE: /Volumes/Dala/research-dala/npHH/npHH.org
+:ARCHIVE_CATEGORY: npHH
+:ARCHIVE_TODO: TODO
+:END:
+
+Main ideas - 
+1. explicitly call each type of neuron, synapse
+2. 
+
+*** REMOVED Old
+CLOSED: [2017-09-12 Tue 16:25]
+#+BEGIN_SRC python :tangle no
+import numpy as np
+import random 
+
+length_simulation = 100000 # in msec
+time_step = 0.02
+
+# setup network
+no_neuron_types=2
+no_neurons=[100,20]
+
+# define connections --- for now only connections from type 0 to 0 --- TODO to use gen_network functions
+connectivity_matrix=np.array((no_neurons[0],no_neurons[0]))
+for i in range(0,no_neurons[0]):
+ for k in range(0,no_neurons[0]):
+  if (random.random()>0.8) and (i != k):
+   connectivity_matrix[i,j]=1
+   
+no_synapse_types=1
+no_synapses=np.length(np.where(connectivity_matrix==1))  ## TODO for all types of connections
+
+#----- Create vectors for variables
+Nrk_var = [4,4] # number of RK variables per neuron type
+Srk_var = [0,0] # number of RK variables per synapse type
+
+No_var = [0,0] # number of other variables per neuron
+So_var = [2,2] # number of other variables per synapse
+
+Nrkv = np.array((np.sum(no_neurons*Nrk_var))) # vector of all the RK neuron variables
+Srkv = np.array((np.sum(no_synapses*Srk_var)))
+
+Nov = np.array((np.sum(no_neurons*No_var))) # vector of all the RK neuron variables
+Sov = np.array((np.sum(no_synapses*So_var)))
+
+#----- initialize variables -----
+# Nrkv, Srkv, ...
+Iv = np.zeros((no_neurons)) # vector with the input current to each neuron
+Nspike = np.zeros((no_neurons)) # state of neuron -- spiked
+Sspike = np.array((np.sum(no_synapses)))
+
+Rk = np.zeros((4,Nrkv))
+
+# ----- get arrays for neuron/synapse types and start index -----
+Stypes = np.zeros((no_synapses))  #tag:1 ## for now use one type --- TODO modify this based on connections
+Ntypes = np.zeros((np.sum(no_neurons)))
+neuron_types[0:no_neurons[0]] = 0
+for nt in range(1,no_neuron_types):
+ neuron_types[np.sum(no_neurons[0:nt-1]):np.sum(no_neurons[0:nt-1])+no_neurons[nt]]=nt
+
+
+# ------ Vectorized / ??  ---------
+ 
+vNsi_rk = np.zeros((1+np.sum(no_neurons))) 
+vSsi_rk = np.zeros((1+no_synapses))  #tag:1
+
+vNsi_ov = np.zeros((1+np.sum(no_neurons))) 
+vSsi_ov = np.zeros((1+no_synapses))  #tag:1
+
+for nt in range(0,no_neuron_types):
+ vNsi_rk[nt]=int(np.sum(no_neurons[0:nt]*Nrk_var[0:nt]))
+ vNsi_ov[nt]=int(np.sum(no_neurons[0:nt]*No_var[0:nt]))
+vNsi_rk[nt+1]=Nrkv
+vNsi_ov[nt+1]=Nov
+
+for st in range(0,no_synapse_types):
+ vSsi_rk[st]=int(np.sum(no_synapses[0:nt]*Srk_var[0:nt]))
+ vSsi_ov[st]=int(np.sum(no_synapses[0:nt]*So_var[0:nt]))
+vSsi_rk[st+1]=Srkv
+vSsi_ov[st+1]=Sov
+
+#--- Mail loop vectorized ----
+T=0
+
+while (T < length_simulation): 
+
+ for step in range(0,4):
+  for sti in range(0,no_synapse_types):
+   synapse_calc_vect(vSrkv[vSsi_rk[si]:vSsi_rk[si+1]], vSov[Ssi_ov[si]:vSsi_ov[si+1]], Iv, Sspike, Stypes[si])  #tag:2
+
+  for nti in range(0,no_neuron_types):
+   neuron_calc_vect(Nrkv[vNsi_rk[ni]:vNsi_rk[ni+1]], vNov[vNsi_ov[ni]:vNsi_ov[ni+1]], Iv[ni], Ntypes[ni])
+
+ Rk[step,]=RK_step([Nrkv Srkv], step)
+ rk_update(Rk)
+ update_spike_status(Nv,Nspike)
+ distribute_spike_status(Nspike, connectivity, Sspike)
+ T=T+time_step
+
+#@tags
+# 1: modify when more than 1 synapse type
+# 2: needs additional function to distribute Iv and Sspike
+#+END_SRC
+
+#+RESULTS[9a83cf217c9ad9858980214e2465e6b1fc713a43]:
+: 
+: (3,)
+
